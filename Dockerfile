@@ -2,12 +2,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install dependencies
-COPY pyproject.toml .
-RUN pip install --no-cache-dir .
+# Copy everything first
+COPY . .
 
-# Copy source
-COPY vsa_flow/ vsa_flow/
+# Install dependencies
+RUN pip install --no-cache-dir -e .
 
 # Run
 ENV PORT=8000
