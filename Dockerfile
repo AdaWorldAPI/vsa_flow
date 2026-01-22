@@ -2,11 +2,12 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Copy everything first
-COPY . .
+# Install dependencies first (cached layer)
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Install dependencies
-RUN pip install --no-cache-dir -e .
+# Copy source
+COPY vsa_flow/ vsa_flow/
 
 # Run
 ENV PORT=8000
