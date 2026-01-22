@@ -6,14 +6,13 @@ GET /query — similarity search, return mRNA list
 """
 
 from fastapi import FastAPI, Request, Response, HTTPException
-from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 from typing import Optional
 from uuid import UUID, uuid4
 import os
 
-from ..core.mrna import mRNA, bind, bundle, CB
-from ..core.execution import Execution, probe_workflow, probe_status, probe_composite
+from ..core.mrna import mRNA, bind, bundle, CB, DIM
+from ..core.execution import Execution
 from ..core.store import Store
 from ..core.encode import encode_uuid
 from ..transport.wire import Envelope, CONTENT_TYPE, Receiver
@@ -33,7 +32,8 @@ async def lifespan(app: FastAPI):
         namespace="flow"
     )
     yield
-    await store.close()
+    if store:
+        await store.close()
 
 
 app = FastAPI(
@@ -50,19 +50,14 @@ receiver = Receiver()
 
 
 @receiver.on("execute")
-async def handle_execute(vector: mRNA, verb: mRNA) -> Optional[mRNA]:
+async def handle_execute(vector: mRNA, verb: Optional[mRNA]) -> Optional[mRNA]:
     """Execute workflow from mRNA."""
-    # Extract workflow ID from vector by probing
-    # (In practice, would decode or use metadata)
     exec = Execution(
-        workflow_id=uuid4(),  # Would extract from vector
+        workflow_id=uuid4(),
         status="running"
     )
-    
-    # Simulate execution
     exec.complete({"result": "ok"})
     
-    # Store result
     await store.place(exec.vector, str(exec.execution_id), {
         "workflow_id": str(exec.workflow_id),
         "status": exec.status
@@ -72,20 +67,18 @@ async def handle_execute(vector: mRNA, verb: mRNA) -> Optional[mRNA]:
 
 
 @receiver.on("query")
-async def handle_query(vector: mRNA, verb: mRNA) -> Optional[mRNA]:
+async def handle_query(vector: mRNA, verb: Optional[mRNA]) -> Optional[mRNA]:
     """Query by similarity."""
     results = await store.nearby(vector, k=5)
     
     if not results:
         return None
     
-    # Return best match
-    best = results[0]
-    return best.vector
+    return results[0].vector
 
 
 @receiver.default
-async def handle_default(vector: mRNA, verb: mRNA) -> Optional[mRNA]:
+async def handle_default(vector: mRNA, verb: Optional[mRNA]) -> Optional[mRNA]:
     """Default: store the vector."""
     id = str(uuid4())
     await store.place(vector, id)
@@ -113,7 +106,7 @@ async def mrna_endpoint(request: Request) -> Response:
     return Response(status_code=204)
 
 
-# === JSON fallback endpoints (for debugging/compatibility) ===
+# === JSON fallback endpoints ===
 
 @app.post("/execute")
 async def execute_workflow(
@@ -128,10 +121,8 @@ async def execute_workflow(
         input_data=input_data
     ).start()
     
-    # Simulate execution
     exec.complete({"result": "executed"})
     
-    # Store as mRNA
     await store.place(exec.vector, str(exec.execution_id), {
         "workflow_id": workflow_id,
         "status": exec.status
@@ -145,6 +136,16 @@ async def execute_workflow(
     }
 
 
+def _probe_status(status: str) -> mRNA:
+    """Create status probe."""
+    return bind(CB.STATUS(), CB.get(f"status::{status}"))
+
+
+def _probe_workflow(workflow_id: UUID) -> mRNA:
+    """Create workflow probe."""
+    return bind(CB.WORKFLOW_ID(), encode_uuid(workflow_id))
+
+
 @app.get("/executions")
 async def list_executions(
     workflow_id: Optional[str] = None,
@@ -152,11 +153,20 @@ async def list_executions(
     k: int = 20
 ) -> dict:
     """Query executions by similarity."""
-    # Build probe
-    probe = probe_composite(
-        workflow_id=UUID(workflow_id) if workflow_id else None,
-        status=status
-    )
+    probes = []
+    
+    if workflow_id:
+        probes.append(_probe_workflow(UUID(workflow_id)))
+    
+    if status:
+        probes.append(_probe_status(status))
+    
+    if not probes:
+        probe = CB.EXECUTION_ID()
+    elif len(probes) == 1:
+        probe = probes[0]
+    else:
+        probe = bundle(*probes)
     
     results = await store.nearby(probe, k=k)
     
@@ -181,10 +191,9 @@ async def get_execution(execution_id: str) -> dict:
     if not vec:
         raise HTTPException(404, "Not found")
     
-    # Probe for status
-    success_score = vec @ probe_status("success")
-    error_score = vec @ probe_status("error")
-    running_score = vec @ probe_status("running")
+    success_score = vec @ _probe_status("success")
+    error_score = vec @ _probe_status("error")
+    running_score = vec @ _probe_status("running")
     
     likely_status = "unknown"
     if success_score > 0.5:
@@ -212,7 +221,7 @@ async def health() -> dict:
     return {
         "status": "ok",
         "store": store.stats() if store else None,
-        "dimension": 10000,
+        "dimension": DIM,
         "wire_format": "mRNA-10K",
         "content_type": CONTENT_TYPE
     }
@@ -223,7 +232,7 @@ async def root() -> dict:
     """Info."""
     return {
         "service": "vsa_flow",
-        "version": "1.0.0",
+        "version": "1.0.0", 
         "description": "10KD mRNA workflow execution",
         "endpoints": {
             "/mrna": "Binary mRNA endpoint (POST)",
@@ -232,7 +241,3 @@ async def root() -> dict:
             "/health": "Health check"
         }
     }
-
-
-# Import DIM for health endpoint
-from ..core.mrna import DIM
