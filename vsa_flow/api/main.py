@@ -1,5 +1,12 @@
-"""mRNA API - binary vectors over HTTP + Hive Orchestration.
+"""mRNA API - binary vectors over HTTP + Hive Orchestration + Oculus Gateway.
 
+Oculus Gateway (THE entry point):
+POST /oculus — auth + route mRNA to appropriate hive
+POST /oculus/broadcast — send to multiple hives
+GET /oculus/routes — show routing table
+GET /oculus/stats — gateway statistics
+
+mRNA Core:
 POST /mrna — receive mRNA, route by verb
 POST /execute — execute workflow, return mRNA
 GET /query — similarity search, return mRNA list
@@ -23,6 +30,7 @@ from ..core.store import Store
 from ..core.encode import encode_uuid
 from ..transport.wire import Envelope, CONTENT_TYPE, Receiver
 from .hive_routes import router as hive_router
+from ..oculus_gateway import gateway_router
 
 
 # Global store
@@ -45,13 +53,14 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="vsa_flow",
-    description="10KD mRNA workflow execution + Hive Orchestration",
-    version="2.0.0",
+    description="10KD mRNA workflow execution + Hive Orchestration + Oculus Gateway",
+    version="3.0.0",
     lifespan=lifespan
 )
 
-# Include hive controller routes
-app.include_router(hive_router)
+# Include routers
+app.include_router(gateway_router)  # Oculus gateway (THE entry point)
+app.include_router(hive_router)     # Hive controller
 
 
 # === mRNA receiver ===
@@ -234,7 +243,8 @@ async def health() -> dict:
         "dimension": DIM,
         "wire_format": "mRNA-10K",
         "content_type": CONTENT_TYPE,
-        "hive_controller": "enabled"
+        "hive_controller": "enabled",
+        "oculus_gateway": "enabled"
     }
 
 
@@ -243,16 +253,29 @@ async def root() -> dict:
     """Info."""
     return {
         "service": "vsa_flow",
-        "version": "2.0.0", 
-        "description": "10KD mRNA workflow execution + Hive Orchestration",
+        "version": "3.0.0", 
+        "description": "10KD mRNA workflow execution + Hive Orchestration + Oculus Gateway",
         "endpoints": {
-            "/mrna": "Binary mRNA endpoint (POST)",
-            "/execute": "Execute workflow (POST, JSON)",
-            "/executions": "Query executions (GET)",
-            "/health": "Health check",
-            "/hive/state": "Get hive controller state",
-            "/hive/tick": "Trigger tick (QStash)",
-            "/hive/awareness": "Send awareness packet",
-            "/hive/light": "Send light mRNA"
+            "gateway": {
+                "/oculus": "THE mRNA entry point - auth + route (POST)",
+                "/oculus/broadcast": "Send to multiple hives (POST)",
+                "/oculus/routes": "Show routing table (GET)",
+                "/oculus/stats": "Gateway statistics (GET)"
+            },
+            "mrna": {
+                "/mrna": "Binary mRNA endpoint (POST)",
+                "/execute": "Execute workflow (POST, JSON)",
+                "/executions": "Query executions (GET)"
+            },
+            "hive": {
+                "/hive/state": "Get hive controller state",
+                "/hive/tick": "Trigger tick (QStash)",
+                "/hive/awareness": "Send awareness packet",
+                "/hive/light": "Send light mRNA"
+            },
+            "meta": {
+                "/health": "Health check",
+                "/": "This info"
+            }
         }
     }
