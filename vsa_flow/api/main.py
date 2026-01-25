@@ -1,8 +1,14 @@
-"""mRNA API - binary vectors over HTTP.
+"""mRNA API - binary vectors over HTTP + Hive Orchestration.
 
 POST /mrna — receive mRNA, route by verb
 POST /execute — execute workflow, return mRNA
 GET /query — similarity search, return mRNA list
+
+Hive Controller:
+POST /hive/tick — 5-minute tick
+POST /hive/awareness — send awareness to hives
+POST /hive/light — send light mRNA
+GET /hive/state — get controller state
 """
 
 from fastapi import FastAPI, Request, Response, HTTPException
@@ -16,6 +22,7 @@ from ..core.execution import Execution
 from ..core.store import Store
 from ..core.encode import encode_uuid
 from ..transport.wire import Envelope, CONTENT_TYPE, Receiver
+from .hive_routes import router as hive_router
 
 
 # Global store
@@ -38,10 +45,13 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="vsa_flow",
-    description="10KD mRNA workflow execution. No JSON.",
-    version="1.0.0",
+    description="10KD mRNA workflow execution + Hive Orchestration",
+    version="2.0.0",
     lifespan=lifespan
 )
+
+# Include hive controller routes
+app.include_router(hive_router)
 
 
 # === mRNA receiver ===
@@ -223,7 +233,8 @@ async def health() -> dict:
         "store": store.stats() if store else None,
         "dimension": DIM,
         "wire_format": "mRNA-10K",
-        "content_type": CONTENT_TYPE
+        "content_type": CONTENT_TYPE,
+        "hive_controller": "enabled"
     }
 
 
@@ -232,12 +243,16 @@ async def root() -> dict:
     """Info."""
     return {
         "service": "vsa_flow",
-        "version": "1.0.0", 
-        "description": "10KD mRNA workflow execution",
+        "version": "2.0.0", 
+        "description": "10KD mRNA workflow execution + Hive Orchestration",
         "endpoints": {
             "/mrna": "Binary mRNA endpoint (POST)",
             "/execute": "Execute workflow (POST, JSON)",
             "/executions": "Query executions (GET)",
-            "/health": "Health check"
+            "/health": "Health check",
+            "/hive/state": "Get hive controller state",
+            "/hive/tick": "Trigger tick (QStash)",
+            "/hive/awareness": "Send awareness packet",
+            "/hive/light": "Send light mRNA"
         }
     }
